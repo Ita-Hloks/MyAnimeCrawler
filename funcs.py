@@ -1,3 +1,5 @@
+import os
+import re
 import time
 
 import requests
@@ -33,3 +35,30 @@ def try_to_get(url, sleep=None, name=None, chance=None, headers=None):
                 print("[ERR] Request failed, exit program")
 
     print(f"[BREAK] {name} request failed, already tried {chance} times")
+
+
+def w_sanitize(name):
+    """Perform secure processing on the name, ensure it can be saved correctly in Windows Explorer."""
+    # remove HTML space
+    name = name.replace("&nbsp;", " ")
+    # Remove Windows disabled characters
+    name = re.sub(r'[<>:"/\\|?*]', '_', name).strip()
+    # Handling Windows Reserved Names
+    if name.upper() in {"CON", "PRN", "AUX", "NUL", *{f"COM{i}" for i in range(1, 10)},
+                        *{f"LPT{i}" for i in range(1, 10)}}:
+        name = "_" + name
+    # Avoid spaces or full stops on the end
+    return name.rstrip(' .')
+
+
+def safe_remove_continue(file_path):
+    """Safe remove the file, even if it meets Warning or Error"""
+    try:
+        os.remove(file_path)
+        print(f"[OK] {file_path} has been removed")
+    except FileNotFoundError:
+        print(f"[LOG] {file_path} not exist")
+    except PermissionError:
+        print(f"[WARN] Not permission to delete {file_path}")
+    except Exception as e:
+        print(f"[ERR] Error occurred when deleting {file_path} :\n {e}")

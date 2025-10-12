@@ -1,47 +1,83 @@
 import asyncio
 import os
+import random
+import string
 from collections import Counter
 import aiofiles
 import aiohttp
 import requests
 import re
 from lxml import etree
+from pathlib import Path
 
-from funcs import try_to_get
+from funcs import try_to_get, w_sanitize, safe_remove_continue
 # ATTENTION: config was put in gitignore
 from config import URL, HEADERS, Episode_URL
 
+obj_find_anime_name = re.compile(r'<title>《(?P<name>.*?)》.*?</title>', re.S)
+obj_find_index_m3u8 = re.compile(r"https://dxfbk.com/\?url=.*?' title=", re.S)
+
+
 def get_episode_list_url(url):
     """
-    Get the every episode link, return a list
-    Format
-    episode_list = [[source1], [source2], length] - (length=2)
-    reso_list = [episode1.link, episode2.link, length] - (length=2)
-    """
+    download the list about the episode number, facilitating possible request interruptions
+    FORMAT:
+    # episode_1
+    https://example//1.com
+    # episode_2
+    https://example//2.com
+    ...
+"""
+
     resp = requests.get(url, headers=HEADERS)
     content = etree.HTML(resp.text)
-    episode_list = []  # Master List
     divs = content.xpath('//div[@class="anthology-list-box none"]/div/ul')
-    for div in divs:
-        lis = div.xpath('./li/a')
-        reso_list = []  # The address of each video source, the last was the length
-        for li in lis:
-            episode_link = li.xpath('./@href')[0].split('/')[-1]
-            episode_num = li.xpath('normalize-space(./text())')
-            print(episode_num, ":", Episode_URL + episode_link)
-            reso_list.append(Episode_URL)
-        reso_list.append(len(reso_list))
-        episode_list.append(reso_list)
-        print("=============================================")
+    source_list = content.xpath('//div[@class="anthology-tab nav-swiper b-b br"]/div/a/text()')
+    match_name = obj_find_anime_name.search(resp.text)
+
+    if match_name is None:
+        # If fail to fetch anime name, Generate one at random
+        anime_name = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+        print("[WARN] Anime Name was not found")
+    else:
+        anime_name = match_name.group('name')
+        anime_name = w_sanitize(anime_name)
+        # ensure it can be saved correctly
+    print("[INFO] The anime name: ", anime_name)
+
+    #  Check the Path and father folder is existed? If not, create it
+    Path(f"./m3u8/{anime_name}").mkdir(parents=True, exist_ok=True)
+
+    #  Delete the old file
+    safe_remove_continue(f"./m3u8/{anime_name}/DownloadList.txt")
+
+    source_index = 0
+    with open(f"./m3u8/{anime_name}/DownloadList.txt", "a") as f:
+        for div in divs:
+            lis = div.xpath('./li/a')
+            reso_list = []  # The address of each video source, the last was the length
+            f.write(f"========= {w_sanitize(source_list[source_index])} =========\n")
+            source_index += 1
+            for li in lis:
+                episode_link = li.xpath('./@href')[0].split('/')[-1]
+                episode_num = li.xpath('normalize-space(./text())')
+
+                print(episode_num, ":", Episode_URL + episode_link)
+                # Write the episode_num and download link
+                f.write(f"# {episode_num}\n")
+                f.write(f"{Episode_URL + episode_link}\n")
+                reso_list.append(Episode_URL)
+            print("=============================================")
     print("[OK] All links have been successfully retrieved! Now attempting to download....")
-    episode_list.append(len(episode_list))
-    return episode_list
+    return anime_name
 
 
-# Fetch m3u8 Url for Source code, return m3u8 download link
 def get_episode_m3u8(url):
+    """
+    Fetch m3u8 Url for Source code, return m3u8 download link
+"""
     resp = try_to_get(url, name="Index Link For M3U8", headers=HEADERS)
-    obj_find_index_m3u8 = re.compile(r"https://dxfbk.com/\?url=(?P<index_m3u8_url>.*?)' title=", re.S)
+
     m3u8_link = obj_find_index_m3u8.findall(resp.text)[0]
     print(f"[OK] Successfully Obtained The Index Link For M3U8: {m3u8_link}, Currently Concatenating URLs...")
     # 'https://???/20250708/19470_e0b22023/index.m3u8'
@@ -75,6 +111,9 @@ async def download_ts(url, line, session):
 
 
 async def download_video(head_url):
+    """
+    According to the m3u8 file, asynchronous download the .ts segments, which use the download_ts function.
+"""
     tasks = []
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -90,6 +129,9 @@ async def download_video(head_url):
 
 
 def merge_files(m3u8_path="./m3u8/video.m3u8", output_file="./the_file.ts"):
+    """
+    merge the segments .ts files to a complete m3u8 file.
+"""
     ts_list = []
     ad_list = []
 
@@ -165,7 +207,8 @@ def merge_files(m3u8_path="./m3u8/video.m3u8", output_file="./the_file.ts"):
 
 
 if __name__ == '__main__':
-    m3u8_head_url, video_m3u8_url = get_episode_m3u8(URL)  # Page source code URL
+    anime_name = get_episode_list_url(URL)
+    # m3u8_head_url, video_m3u8_url = get_episode_m3u8(anime_name)  # Page source code URL
     # download_m3u8(video_m3u8_url, "./m3u8/")
     # asyncio.run(download_video(m3u8_head_url))
     # merge_files()

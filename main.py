@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import string
+import time
 from collections import Counter
 import aiofiles
 import aiohttp
@@ -15,7 +16,7 @@ from funcs import try_to_get, w_sanitize, safe_remove_continue
 from config import URL, HEADERS, Episode_URL
 
 obj_find_anime_name = re.compile(r'<title>《(?P<name>.*?)》.*?</title>', re.S)
-obj_find_index_m3u8 = re.compile(r"https://dxfbk.com/\?url=.*?' title=", re.S)
+obj_find_index_m3u8 = re.compile(r"https://dxfbk.com/\?url=(.*?)' title=", re.S)
 
 
 def get_episode_list_url(url):
@@ -49,10 +50,10 @@ def get_episode_list_url(url):
     Path(f"./m3u8/{anime_name}").mkdir(parents=True, exist_ok=True)
 
     #  Delete the old file
-    safe_remove_continue(f"./m3u8/{anime_name}/DownloadList.txt")
+    safe_remove_continue(f"./m3u8/{anime_name}/downloadList.txt")
 
     source_index = 0
-    with open(f"./m3u8/{anime_name}/DownloadList.txt", "a") as f:
+    with open(f"./m3u8/{anime_name}/downloadList.txt", "a") as f:
         for div in divs:
             lis = div.xpath('./li/a')
             reso_list = []  # The address of each video source, the last was the length
@@ -96,8 +97,14 @@ def get_episode_m3u8(url):
 
 
 def download_m3u8(video_m3u8_url, address):
+    directory = os.path.dirname(address)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+        print(f"[INFO] Create Folder: {directory}")
+
     result = try_to_get(video_m3u8_url, name="M3U8 File", headers=HEADERS)
     save_address = address + "video.m3u8"
+    print(save_address)
     with open(save_address, "wb") as f:
         f.write(result.content)
     print(f"[OK] .m3u8 File Download Successful, Save path: {save_address}")
@@ -110,14 +117,14 @@ async def download_ts(url, line, session):
     print(f"{line} Download Successful")
 
 
-async def download_video(head_url):
+async def download_video(head_url, path):
     """
     According to the m3u8 file, asynchronous download the .ts segments, which use the download_ts function.
 """
     tasks = []
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
-        async with aiofiles.open("./m3u8/video.m3u8", "r", encoding="utf-8") as f:
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
             async for line in f:
                 line = line.strip()
                 if line.startswith("#"):
@@ -128,7 +135,7 @@ async def download_video(head_url):
             await asyncio.wait(tasks)
 
 
-def merge_files(m3u8_path="./m3u8/video.m3u8", output_file="./the_file.ts"):
+def merge_files(m3u8_path, output_file):
     """
     merge the segments .ts files to a complete m3u8 file.
 """
@@ -207,8 +214,34 @@ def merge_files(m3u8_path="./m3u8/video.m3u8", output_file="./the_file.ts"):
 
 
 if __name__ == '__main__':
-    anime_name = get_episode_list_url(URL)
-    # m3u8_head_url, video_m3u8_url = get_episode_m3u8(anime_name)  # Page source code URL
-    # download_m3u8(video_m3u8_url, "./m3u8/")
-    # asyncio.run(download_video(m3u8_head_url))
-    # merge_files()
+    # anime_name = get_episode_list_url(URL)
+    anime_name = "我们不可能成为恋人！绝对不行。（※似乎可行？）"
+    download_video_index_start = 1
+    download_video_index_end = 2
+
+    episode_link = []
+    episode_number = []
+
+    source_index = 1
+
+    with open(f"./m3u8/{anime_name}/downloadList.txt", "r") as f:
+        for line in f:
+            #  TODO: support to switch the download source.
+            line = line.strip()
+            if line.startswith("="):
+                source_index -= 1
+                if source_index <= 0:
+                    continue  # skip
+                else:
+                    break
+            elif line.startswith("#"):
+                episode_number.append(line.strip("# "))
+            else:
+                episode_link.append(line.strip(" "))
+    for i in range(download_video_index_start - 1, download_video_index_end):
+        path = f"./m3u8/{anime_name}/{episode_number[i]}/"
+        m3u8_head_url, video_m3u8_url = get_episode_m3u8(episode_link[i])  # Page source code URL
+        download_m3u8(video_m3u8_url, path)
+        asyncio.run(download_video(m3u8_head_url, path + "video.m3u8"))
+        merge_files(f"{path + "video.m3u8"}", f"./m3u8/{anime_name}/{anime_name + episode_number[i]}.ts")
+        time.sleep(5)

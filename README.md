@@ -4,6 +4,8 @@
 
 注意：项目下载后 **无法直接运行** ，因为 config.py 已被加入.gitignore。项目会缺失 URL 和 cookie
 
+<img src="./introduce.jpg" alt="项目描述" />
+
 ---
 
 ## 免责声明

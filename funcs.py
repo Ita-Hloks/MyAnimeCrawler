@@ -28,7 +28,7 @@ def try_to_get(url, sleep=None, name=None, chance=None, headers=None):
             resp.raise_for_status()
             return resp
         except requests.RequestException as e:
-            print(f"[WARN] {name} get failed, Count: {attempt + 1}")
+            print(f"[WARN] {name} get failed, Count down: {chance - attempt}")
             if attempt < chance - 1:
                 print(f"[INFO] Wait {sleep} seconds and retry...")
                 time.sleep(sleep)
@@ -75,7 +75,6 @@ def w_sanitize(name: str) -> str:
         name = "_"
 
     return name
-
 
 
 def safe_remove_continue(file_path):

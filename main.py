@@ -10,6 +10,7 @@ import re
 from lxml import etree
 from pathlib import Path
 
+from ad_filter_func import detect_ads_by_duration, detect_ads_by_filesize, detect_ads_by_sequence, analyze_ts_pattern
 from funcs import try_to_get, w_sanitize, safe_remove_continue, menu_select
 # ATTENTION: config was put in gitignore
 from config import URL, HEADERS, Episode_URL
@@ -137,10 +138,7 @@ async def download_video(head_url, path):
             await asyncio.wait(tasks)
 
 
-def merge_m3u8(m3u8_path, output_file):
-    """
-Merge the .ts segments into a complete m3u8 file.
-"""
+def merge_m3u8(m3u8_path, output_file, auto_detect=True, manual_review=False):
     ts_list = []
     ad_list = []
 
@@ -154,48 +152,83 @@ Merge the .ts segments into a complete m3u8 file.
 
     print(f"The M3U8 File Contains {len(ts_list)} Fragment(s)")
 
-    # Extract the length of the numeric suffix from each filename
-    digit_len_counts = Counter()
-    basename_to_digits = {}
-    for entry in ts_list:
-        base = os.path.basename(entry)
-        m = re.search(r'(\d+)\.ts$', base)
-        if m:
-            digits = m.group(1)
-            basename_to_digits[entry] = digits
-            digit_len_counts[len(digits)] += 1
-        else:
-            basename_to_digits[entry] = ""
-
-        # Find the normal number length of segments
-    if digit_len_counts:
-        common_len, _ = digit_len_counts.most_common(1)[0]
+    if not auto_detect:
+        # don't auto analyze, merge file directly.
+        print("[INFO] Auto-Detection Disabled, Merging All Segments...")
+        filtered_list = ts_list
     else:
-        common_len = None
+        # analyze the naming patterns
+        main_pattern, patterns = analyze_ts_pattern(ts_list)
+        print(f"[DBG] Naming Pattern Analysis: {patterns}")
+        print(f"[DBG] Main Pattern: {main_pattern}")
 
-    print(f"[DBG] Numerical length distribution: {dict(digit_len_counts)} -> Normal Length: {common_len}")
+        ad_indices = set()
+        # according to the naming patterns to choice the analysis strategies
+        if main_pattern == 'sequential':
+            # Continuous number naming: using the sequence analysis
+            print("[INFO] Using Sequence-Based AD Detection...")
+            ad_indices = set(detect_ads_by_sequence(ts_list))
 
-    # Determine ad based on abnormal numerical length (as long as the length isn't equal to most common length)
-    filtered_list = []
-    for entry in ts_list:
-        digits = basename_to_digits.get(entry, "")
-        if digits and common_len is not None and len(digits) != common_len:
-            ad_list.append(os.path.basename(entry))
+        elif main_pattern == 'md5_hash':
+            # MD5-hash naming：using the duration analysis + file size analysis
+            print("[INFO] Detected MD5-Hash Naming, Using Multi-Strategy Detection...")
+
+            # Strategy1: duration analysis
+            try:
+                duration_ads = set(detect_ads_by_duration(ts_list, m3u8_path))
+                print(f"[DBG] Duration-Based Detection: {len(duration_ads)} suspicious segments")
+            except Exception as e:
+                print(f"[WARN] Duration Analysis Failed: {e}")
+                duration_ads = set()
+
+            # Strategy2: Analyze file size
+            try:
+                size_ads = set(detect_ads_by_filesize(ts_list))
+                print(f"[DBG] Size-Based Detection: {len(size_ads)} suspicious segments")
+            except Exception as e:
+                print(f"[WARN] Size Analysis Failed: {e}")
+                size_ads = set()
+            # Take the intersection (both methods consider labeling as AD)
+            ad_indices = duration_ads & size_ads
+            print(f"[INFO] Confirmed AD Segments (Intersection): {len(ad_indices)}")
+            # If there is no intersection, it means the analysis not unreliable and no segments will be deleted
+            if not ad_indices:
+                print("[INFO] No Reliable AD Detection, Keeping All Segments")
+
         else:
-            # Retain m3u8 relative path
-            candidate = entry
-            if not os.path.isabs(candidate) and not candidate.startswith("http"):
-                candidate = os.path.join("./m3u8", os.path.basename(entry))
-            filtered_list.append(candidate)
+            # other states: conservative strategy, not delete
+            print("[INFO] Mixed/Unknown Naming Pattern, Skipping AD Detection")
+            ad_indices = set()
+        # Build a filtered list
+        filtered_list = []
+        for i, entry in enumerate(ts_list):
+            if i in ad_indices:
+                ad_list.append(os.path.basename(entry))
+            else:
+                # Remain m3u8 relative path
+                candidate = entry
+                if not os.path.isabs(candidate) and not candidate.startswith("http"):
+                    candidate = os.path.join("./m3u8", os.path.basename(entry))
+                filtered_list.append(candidate)
 
     if ad_list:
-        print(f"[INFO] Identified {len(ad_list)} AD Segment(s) (Filtered):")
-        for ad in ad_list:
+        print(f"\n[INFO] Identified {len(ad_list)} AD Segment(s) (Will Be Filtered):")
+        # Only show the first 20 to avoid flooding the screen
+        for ad in ad_list[:20]:
             print(f"  - {ad}")
+        if len(ad_list) > 20:
+            print(f"  ... and {len(ad_list) - 20} more")
+
+        # if it needs the manual confirmation
+        if manual_review:
+            response = input("\n[?] Proceed with filtering? (y/n, default=y): ").strip().lower()
+            if response == 'n':
+                print("[INFO] Filtering Cancelled, Merging All Segments...")
+                filtered_list = ts_list
     else:
         print("[INFO] No AD Segments Detected")
 
-    print(f"\n[INFO] Retain {len(filtered_list)} Right Segment(s), Try To Merge...")
+    print(f"\n[INFO] Will Merge {len(filtered_list)} Segment(s)...")
 
     # Merge ts Files
     try:
@@ -204,10 +237,11 @@ Merge the .ts segments into a complete m3u8 file.
                 if not os.path.exists(ts_file):
                     print(f"[WARN] File Not Exist - {ts_file}")
                     continue
+
                 with open(ts_file, "rb") as infile:
                     outfile.write(infile.read())
 
-        print(f"[INFO] Output File: {os.path.abspath(output_file)}")
+        print(f"\n[SUCCESS] Output File: {os.path.abspath(output_file)}")
         print(f"[INFO] File Size: {os.path.getsize(output_file) / 1024 / 1024:.2f} MB")
 
     except Exception as e:
@@ -265,8 +299,7 @@ def choice_video_source(path, source_index):
 
 
 if __name__ == '__main__':
-    # anime_name = get_episode_list_url(URL)
-    anime_name = "我们不可能成为恋人！绝对不行。（※似乎可行？）"
+    anime_name = get_episode_list_url(URL)
 
     download_video_index_start = int(input("Input the download start index: \n > "))
     download_video_index_end = int(input("Input the download end index: \n > "))

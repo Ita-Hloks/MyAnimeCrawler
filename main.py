@@ -3,7 +3,6 @@ import os
 import random
 import string
 import time
-from collections import Counter
 import aiofiles
 import aiohttp
 import re
@@ -17,6 +16,10 @@ from config import URL, HEADERS, Episode_URL
 
 obj_find_anime_name = re.compile(r'<title>《(?P<name>.*?)》.*?</title>', re.S)
 obj_find_index_m3u8 = re.compile(r"https://dxfbk.com/\?url=(.*?)' title=", re.S)
+
+#  ======================= PARAMS =======================
+HISTORY_PATH = "./m3u8/history.txt"
+
 
 
 def get_episode_list_url(url):
@@ -43,7 +46,7 @@ def get_episode_list_url(url):
     else:
         anime_name = w_sanitize(match_name.group('name'))
         # ensure it can be saved correctly
-    print("[INFO] The anime name: ", anime_name)
+    print("[INFO] Request Anime Name: ", anime_name)
 
     path = f"./m3u8/{anime_name}/"
 
@@ -115,6 +118,7 @@ def download_m3u8(video_m3u8_url, address):
 
 async def download_ts(url, line, session):
     async with session.get(url, headers=HEADERS) as response:
+        os.makedirs('./m3u8', exist_ok=True)
         async with aiofiles.open(f'./m3u8/{line}', 'wb') as f:
             await f.write(await response.read())
     print(f"{line} Successful")
@@ -298,21 +302,49 @@ def choice_video_source(path, source_index):
     return episode_number, episode_link
 
 
+def retrieve_history_downloadList(url, search_path, check_history=True):
+    if check_history is False:
+        return "not found"
+
+    history_path = Path(search_path)
+    history_path.parent.mkdir(parents=True, exist_ok=True)  # Ensure m3u8 folder exist
+
+    if not history_path.exists():
+        history_path.touch()
+
+    with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(f"{url}="):
+                anime_name = line.split("=")[1]
+                print(f"[OK] Obtain historical download records, get the name: {anime_name}")
+                return anime_name
+    print("[INFO] History DownloadList Not Found, Start to request...")
+    return "not found"
+
+
 if __name__ == '__main__':
-    anime_name = get_episode_list_url(URL)
+    Check_history = True
+    anime_name = retrieve_history_downloadList(URL, HISTORY_PATH, check_history=True)
+
+    if anime_name == "not found":
+        anime_name = get_episode_list_url(URL)
+        print("[INFO] Save this download request")
+        with open(HISTORY_PATH, "a", encoding="utf-8") as f:
+            f.write(URL + "=" + anime_name + "\n")
+
+    DOWNLOAD_LIST_PATH = f"./m3u8/{anime_name}/downloadList.txt"
+
+    # Get Source_list
+    source_list = get_source_list(DOWNLOAD_LIST_PATH)
+
+    #  Choice the download source
+    source_choice_name, source_choice_index = menu_select("Choice the download source", source_list)
+
+    episode_number, episode_link = choice_video_source(DOWNLOAD_LIST_PATH, source_choice_index)
 
     download_video_index_start = int(input("Input the download start index: \n > "))
     download_video_index_end = int(input("Input the download end index: \n > "))
-
-    # Get Source_list
-    source_list = get_source_list(f"./m3u8/{anime_name}/downloadList.txt")
-
-    #  Choice the download source
-    source_choice, source_index = menu_select("Choice the download source", source_list)
-
-    episode_number, episode_link = choice_video_source(f"./m3u8/{anime_name}/downloadList.txt", source_index)
-
-    print(source_choice, source_index)
 
     for i in range(download_video_index_start - 1, download_video_index_end):
         path = f"./m3u8/{anime_name}/{episode_number[i]}/"
@@ -320,7 +352,7 @@ if __name__ == '__main__':
         print(episode_number)
         print(episode_link)
 
-        if not episode_number:
+        if not episode_link:
             print("[ERR] No Episodes Found")
             break
 
@@ -328,7 +360,7 @@ if __name__ == '__main__':
         m3u8_head_url, video_m3u8_url = get_episode_m3u8(episode_link[i])  # Page source code URL
         download_m3u8(video_m3u8_url, path)
         asyncio.run(download_video(m3u8_head_url, path + "video.m3u8"))
-        merge_m3u8(f"{path + "video.m3u8"}", f"./m3u8/{anime_name}/{anime_name + episode_number[i]}.ts")
+        merge_m3u8(f"{path + "video.m3u8"}", f"./m3u8/{anime_name}/{anime_name + episode_number[i] + source_choice_name}.ts")
         print(f"{episode_number[i]} download successful! now sleep 5 second...")
         time.sleep(5)
     print("Mission Complete!")

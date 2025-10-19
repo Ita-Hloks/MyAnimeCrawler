@@ -3,7 +3,7 @@ import re
 from collections import Counter
 
 
-def analyze_ts_pattern(ts_list):
+def ads_detect_analyze_ts_pattern(ts_list):
     """analyze the ts file naming pattern"""
     patterns = {
         'sequential': 0,  # Continuous number naming (0.ts, 1.ts, 2.ts...)
@@ -33,7 +33,7 @@ def analyze_ts_pattern(ts_list):
     return main_pattern, patterns
 
 
-def detect_ads_by_sequence(ts_list):
+def ads_detect_by_sequence(ts_list):
     """Analyze the AD based on Index continuity (Suitable for continuous numerical naming)"""
     ad_indices = []
     numbers = []
@@ -77,7 +77,7 @@ def detect_ads_by_sequence(ts_list):
     return ad_indices
 
 
-def detect_ads_by_duration(ts_list, m3u8_path):
+def ads_detect_by_duration(ts_list, m3u8_path):
     """analyze the AD based on duration (reading EXTINF tag form m3u8 file)"""
     ad_indices = []
     durations = []
@@ -123,7 +123,7 @@ def detect_ads_by_duration(ts_list, m3u8_path):
     return ad_indices
 
 
-def detect_ads_by_filesize(ts_list):
+def ads_detect__by_filesize(ts_list):
     """Analyze the AD base on file size"""
     ad_indices = []
     sizes = []

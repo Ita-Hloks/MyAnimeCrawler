@@ -98,6 +98,7 @@ def menu_select(title, options):
         try:
             sel = int(input("Please select an option:\n > "))
             if 1 <= sel <= len(options):
+                print(f"[OK] You Choice {options[sel - 1]}")
                 return options[sel - 1], sel
         except ValueError:
             pass

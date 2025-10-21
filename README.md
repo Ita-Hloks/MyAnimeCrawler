@@ -6,6 +6,23 @@
 
 <img src="./introduce.jpg" alt="项目描述" />
 
+### 输出文件结构
+```text
+m3u8/
+├─ Anime_Name1/
+│  ├─ cache/  # 与下载有关的文件夹
+│  │  └─ 第1集_喵喵云/
+│  │    ├─ file/ 
+│  │    │   ├─ data.txt  # 储存一些下载的必需项
+│  │    │   └─ video.m3u8  # TS 片段列表
+│  │    ├─ 0000000.ts  # 用于合并的 TS 片段
+│  │    └─ 0000001.ts 
+│  ├─ Anime_Name1_第1集汪汪云.ts  # 合成完毕的文件
+│  ├─ Anime_Name1_第2集喵喵云.ts
+│  └─downloadList.txt
+└─ history.txt
+```
+
 ## 免责声明
 
 本项目仅用于个人 Python 网络爬虫学习，请勿将本项目用于任何商业或非法用途，包括但不限于：

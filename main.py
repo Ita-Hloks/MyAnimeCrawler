@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import string
+import sys
 import time
 from urllib.parse import urljoin
 import aiofiles
@@ -10,7 +11,8 @@ import re
 from lxml import etree
 from pathlib import Path
 
-from ad_filter_func import *
+from ad_filter_func import ads_detect_analyze_ts_pattern, ads_detect_by_sequence, ads_detect_by_duration, \
+    ads_detect_by_filesize
 from funcs import try_to_get, w_sanitize, safe_remove_continue, menu_select
 # ATTENTION: config was put in gitignore
 from config import URL, HEADERS, Episode_URL
@@ -20,6 +22,7 @@ obj_find_index_m3u8 = re.compile(r"https://dxfbk.com/\?url=(.*?)' title=", re.S)
 
 #  ======================= PARAMS =======================
 HISTORY_PATH = "./m3u8/history.txt"
+is_new_anime = False
 
 
 def get_episode_list_url(url: str):
@@ -41,14 +44,14 @@ def get_episode_list_url(url: str):
 
     if match_name is None:
         # If fail to fetch anime name, Generate one at random
-        anime_name = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+        name = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
         print("[WARN] Anime Name was not found")
     else:
-        anime_name = w_sanitize(match_name.group('name'))
+        name = w_sanitize(match_name.group('name'))
         # ensure it can be saved correctly
-    print("[INFO] Request Anime Name: ", anime_name)
+    print("[INFO] Request Anime Name: ", name)
 
-    path = f"./m3u8/{anime_name}/"
+    path = f"./m3u8/{name}/"
 
     #  Check the Path and father folder is existed? If not, create it
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -76,42 +79,44 @@ def get_episode_list_url(url: str):
                 f.write(f"{Episode_URL + episode_link}\n")
                 reso_list.append(Episode_URL)
     print("[OK] All links have been successfully retrieved! Now attempting to download....")
-    return anime_name
+    return name
 
 
-def get_episode_m3u8(url: str):
+def get_episode_m3u8(url: str, path: str):
     """
     Fetch m3u8 Url for Source code, return m3u8 download link
     :param url: which can get the ndex.m3u8 link
+    :param path: which can save head_url
 """
     resp = try_to_get(url, name="Index Link For M3U8", headers=HEADERS)
 
-    m3u8_link = obj_find_index_m3u8.findall(resp.text)[0]
-    print(f"[OK] Successfully Obtained The Index Link For M3U8: {m3u8_link}, Currently Concatenating URLs...")
-    # 'https://???/20250708/19470_e0b22023/index.m3u8'
+    m3u8_link = obj_find_index_m3u8.findall(resp.text)[0]  # 'https://???/20250708/19470_e0b22023/index.m3u8'
+    print(f"[OK] Successfully Obtained Index Link For M3U8: {m3u8_link}, Currently Concatenating URLs...")
     resp_m3u8 = try_to_get(m3u8_link, name="M3U8 Request Link Suffix", headers=HEADERS)
     lines = resp_m3u8.content.splitlines()
-    last_line = lines[-1].decode("utf-8")
-    base_url = m3u8_link.rsplit("/", 1)[0] + "/"
-    # 'https://???/20250708/19470_e0b22023/' Remove m3u8 tail
+    last_line = lines[-1].decode("utf-8")  # last_line = 2000k/hls/mixed.m3u8
+    m3u8_url = urljoin(m3u8_link, last_line)  # https://???/20250708/19470_e0b22023/2000k/hls/mixed.m3u8
+    head_url = m3u8_url.rsplit("/", 1)[0] + "/"  # 'https://???/20250708/19470_e0b22023/2000k/hls/' m3u8 Request URL
 
-    video_m3u8_url = base_url + last_line
-    m3u8_head_url = video_m3u8_url.rsplit("/", 1)[0] + "/"
-    # 'https://???/20250708/19470_e0b22023/2000k/hls/' m3u8 Request URL
+    file_path = urljoin(path, "file/data.txt")
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
-    print("[OK] Successfully Obtained the Genuine M3U8 Request Link, Start to Download M3U8 File...")
-    return m3u8_head_url, video_m3u8_url
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(f"#HEAD_URL:{head_url}")
+
+    print("[OK] Successfully Obtained Genuine M3U8 Request Link, Start to Download M3U8 File...")
+    return head_url, m3u8_url
 
 
-def download_m3u8(video_m3u8_url: str, address: str):
+def download_m3u8(m3u8_url: str, address: str):
     directory = os.path.dirname(address)
     if directory and not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
         print(f"[INFO] Create Folder: {directory}")
 
-    result = try_to_get(video_m3u8_url, name="M3U8 File", headers=HEADERS)
-    save_address = address + "video.m3u8"
-    print(save_address)
+    result = try_to_get(m3u8_url, name="M3U8 File", headers=HEADERS)
+    save_address = urljoin(address, "file/video.m3u8")
+    print(f"[INFO] M3U8 save in{save_address}")
     with open(save_address, "wb") as f:
         f.write(result.content)
     print(f"[OK] .m3u8 File Download Successful, Save path: {save_address}")
@@ -206,7 +211,7 @@ def merge_m3u8(m3u8_path, output_file, auto_detect=True, manual_review=False):
                 continue
             ts_list.append(line)
 
-    print(f"The M3U8 File Contains {len(ts_list)} Fragment(s)")
+    print(f"M3U8 File Contains {len(ts_list)} Fragment(s)")
 
     if not auto_detect:
         # don't auto analyze, merge file directly.
@@ -239,7 +244,7 @@ def merge_m3u8(m3u8_path, output_file, auto_detect=True, manual_review=False):
 
             # Strategy2: Analyze file size
             try:
-                size_ads = set(ads_detect__by_filesize(ts_list))
+                size_ads = set(ads_detect_by_filesize(ts_list))
                 print(f"[DBG] Size-Based Detection: {len(size_ads)} suspicious segments")
             except Exception as e:
                 print(f"[WARN] Size Analysis Failed: {e}")
@@ -376,31 +381,50 @@ def retrieve_history_downloadList(url, search_path, check_history=True):
 
 
 def retrieve_history_m3u8(search_path, check_history=True):
-    """
-    TODO: Wait for use...
-    """
-    if check_history is False:
-        return "not found"
+    if not check_history:
+        return False
 
-    with open(search_path, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
-        if lines:  # Ensure the line isn't null
-            last_line = lines[-1].strip()
-            return '#EXT-X-ENDLIST' in last_line
-    return False
+    try:
+        # Read video.m3u8
+        m3u8_path = urljoin(search_path, "file/video.m3u8")
+        with open(m3u8_path, 'r', encoding='utf-8') as f:
+            last_line = None
+            for line in f:
+                last_line = line.strip()
+
+        # Read data.txt
+        data_path = urljoin(search_path, "file/data.txt")
+        head_url = None
+        with open(data_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("#HEAD_URL:"):
+                    head_url = line.split(":", 1)[1].strip()
+                    break
+
+        if last_line and '#EXT-X-ENDLIST' in last_line and head_url:
+            print("[OK] M3U8, HEAD_URL Retrieve Successful")
+            return True, head_url
+        else:
+            print("[INFO] No m3u8 download history found")
+            return False
+
+    except FileNotFoundError:
+        print("[INFO] No m3u8 download history found")
+        return False
 
 
 def check_m3u8_files(path):
     """
     Check if all ts files in the m3u8 list exist
     :param path: m3u8 and ts file path
-    :return: ts file name which don't exist (task_list) or "all files exist"
-    """
+    :return: ts file name which don't exist (tasks) or "all files exist"
+"""
     ts_list = []
-    task_list = []
+    tasks = []
 
     # read m3u8 file
-    with open(urljoin(path, "video.m3u8"), encoding="utf-8") as f:
+    with open(urljoin(path, "file/video.m3u8"), encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -411,57 +435,59 @@ def check_m3u8_files(path):
     for ts in ts_list:
         ts_path = os.path.join(path, ts)
         if not os.path.exists(ts_path):
-            task_list.append(ts)
+            tasks.append(ts)
 
-    if task_list:
-        return task_list
+    if tasks:
+        return tasks
     else:
         return "all files exist"
 
 
 if __name__ == '__main__':
-    Check_history = True
-    is_new_anime = False
     anime_name = retrieve_history_downloadList(URL, HISTORY_PATH, check_history=True)
 
     if anime_name == "not found":
         is_new_anime = True
         anime_name = get_episode_list_url(URL)
         print("[INFO] Save this download request")
-        with open(HISTORY_PATH, "a", encoding="utf-8") as f:
-            f.write(f"{URL}={anime_name}\n")
+        with open(HISTORY_PATH, "a", encoding="utf-8") as g:
+            g.write(f"{URL}={anime_name}\n")
 
     DOWNLOAD_LIST_PATH = f"./m3u8/{anime_name}/downloadList.txt"
 
     #  Choice the download source
     source_list = get_source_list(DOWNLOAD_LIST_PATH)
-    source_choice_name, source_choice_index = menu_select("Choice the download source", source_list)
+    source_choice_name, source_choice_index = menu_select("Choice download source", source_list)
     episode_number, episode_link = choice_video_source(DOWNLOAD_LIST_PATH, source_choice_index)
 
     print(episode_number)
     print(episode_link)
-    download_video_index_start = int(input("Input the download start index: \n > "))
-    download_video_index_end = int(input("Input the download end index: \n > "))
+
+    if not episode_link:
+        sys.exit("[ERR] No Episodes Found")
+    download_video_index_start = int(input("Input download start index: \n > "))
+    download_video_index_end = int(input("Input download end index: \n > "))
 
     for i in range(download_video_index_start - 1, download_video_index_end):
-        path = f"./m3u8/{anime_name}/cache/{episode_number[i]}_{source_choice_name}/"
+        g_path = f"./m3u8/{anime_name}/cache/{episode_number[i]}_{source_choice_name}/"
 
-        if not episode_link:
-            print("[ERR] No Episodes Found")
-            break
-
-        m3u8_head_url, video_m3u8_url = get_episode_m3u8(episode_link[i])  # Page source code URL
-        download_m3u8(video_m3u8_url, path)
+        m3u8file_result = retrieve_history_m3u8(g_path, check_history=True)
+        if m3u8file_result:
+            m3u8_head_url = m3u8file_result[1]
+        else:
+            m3u8_head_url, video_m3u8_url = get_episode_m3u8(episode_link[i], g_path)  # Page source code URL
+            download_m3u8(video_m3u8_url, g_path)
 
         if not is_new_anime:
-            task_list = check_m3u8_files(path)
+            task_list = check_m3u8_files(g_path)
             if task_list != "all files exist":
-                print(task_list)
-                asyncio.run(download_video(m3u8_head_url, pattern="T", tasks=task_list))
+                display_list = task_list[:20]
+                print(display_list)
+                asyncio.run(download_video(m3u8_head_url, path=g_path, pattern="T", tasks=task_list))
         else:
-            asyncio.run(download_video(m3u8_head_url, pattern="M", path=f"{path}video.m3u8"))
-        print("[DBG] skip the merge, now over")
-        merge_m3u8(f"{path + "video.m3u8"}",
+            asyncio.run(download_video(m3u8_head_url, pattern="M", path=f"{g_path}file/video.m3u8"))
+
+        merge_m3u8(urljoin(g_path, "file/video.m3u8"),
                    f"./m3u8/{anime_name}/{anime_name + episode_number[i] + source_choice_name}.ts")
         print(f"{episode_number[i]} download successful! now sleep 5 second...")
         time.sleep(5)

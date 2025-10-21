@@ -10,15 +10,17 @@ DEFAULT_HEADERS = {
 }
 
 
-def try_to_get(url, sleep=None, name=None, chance=None, headers=None):
+def try_to_get(
+        url: str,
+        sleep: int = 3,
+        name: str = None,
+        chance: int = 3,
+        headers=None,
+):
     """Try to multiple requests. And return corresponding prompts"""
 
     if headers is None:
         headers = DEFAULT_HEADERS
-    if chance is None:
-        chance = 3
-    if sleep is None:
-        sleep = 3
     if name is None:
         name = url
 
@@ -38,7 +40,7 @@ def try_to_get(url, sleep=None, name=None, chance=None, headers=None):
     print(f"[BREAK] {name} request failed, already tried {chance} times")
 
 
-def w_sanitize(name: str) -> str:
+def w_sanitize(name: str = "_") -> str:
     """
     Perform secure processing on the name, ensure it can be saved correctly in Windows Explorer.
       - Remove HTML tags
@@ -49,8 +51,6 @@ def w_sanitize(name: str) -> str:
       - Strip leading/trailing spaces and dots
       - Collapse multiple spaces into one
 """
-    if not name:
-        return "_"
 
     # 1. Remove HTML tags
     name = BeautifulSoup(name, "html.parser").get_text()
@@ -77,7 +77,7 @@ def w_sanitize(name: str) -> str:
     return name
 
 
-def safe_remove_continue(file_path):
+def safe_remove_continue(file_path: str):
     """Safe remove the file, even if it meets Warning or Error"""
     try:
         os.remove(file_path)

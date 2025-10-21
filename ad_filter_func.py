@@ -123,7 +123,7 @@ def ads_detect_by_duration(ts_list, m3u8_path):
     return ad_indices
 
 
-def ads_detect__by_filesize(ts_list):
+def ads_detect_by_filesize(ts_list):
     """Analyze the AD base on file size"""
     ad_indices = []
     sizes = []
